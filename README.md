@@ -1,5 +1,7 @@
 ## AI Property Consultant — LLM-powered Real Estate Assistant
 
+![CI](https://github.com/Phattarapong26/AI-Assistant-RealEstate/actions/workflows/ci.yml/badge.svg) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 โครงการระหว่างเทอม (Course Project) ในหัวข้อ LLM ที่ออกแบบให้ทุกคนเข้าถึงได้ง่าย โดยใช้กรณีใช้งานด้านอสังหาริมทรัพย์ เพื่อสาธิตการประยุกต์ใช้ LLM กับข้อมูลจริง และวางรากฐานต่อยอดสู่การทำ Machine Learning เพื่อคาดการณ์แนวโน้มราคาเพื่อการลงทุนแบบไม่ดอย
 
 ### Highlights
