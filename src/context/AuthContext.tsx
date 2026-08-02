@@ -1,5 +1,6 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { clearAuthSession } from "@/frontend/api";
 
 interface User {
   id: string;
@@ -44,7 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     setUser(null);
     setIsAuthenticated(false);
-    localStorage.removeItem("property_ai_current_user");
+    clearAuthSession();
   };
   
   return (

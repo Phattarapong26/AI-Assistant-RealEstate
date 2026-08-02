@@ -1,103 +1,145 @@
+"""Google Gemini client wrapper.
+
+Gemini is the only AI provider in this system. It provides exactly two
+capabilities used by the app: text generation (the consultant's answers) and
+text embeddings (the property vector index).
+"""
 
 import logging
-from typing import Dict, Any, List
-from config import MODEL_CONFIG, CONSULTATION_STYLES
+import threading
+from typing import Any, Dict, List, Optional
+
+from google import genai
+from google.genai import types
+
+from config import (
+    EMBEDDING_BATCH_SIZE,
+    GEMINI_CHAT_MODEL,
+    GEMINI_EMBEDDING_MODEL,
+    GEMINI_MAX_OUTPUT_TOKENS,
+    GEMINI_TEMPERATURE,
+    GOOGLE_API_KEY,
+)
 
 logger = logging.getLogger(__name__)
 
-class LanguageModelManager:
-    def __init__(self):
-        """
-        Manages language model interactions for the AI property consultant
-        
-        In production, this would connect to actual language models.
-        For this demo, we'll use templates.
-        """
-        self.model_config = MODEL_CONFIG
-        logger.info(f"Initialized LanguageModelManager with config: {MODEL_CONFIG}")
-        
-    def generate_response(self, 
-                          query: str, 
-                          properties: List[Dict[str, Any]], 
-                          style: str = "formal", 
-                          context: List[Dict[str, Any]] = None) -> str:
-        """
-        Generate AI response based on query, matched properties, and consultation style
-        """
+
+class GeminiUnavailableError(RuntimeError):
+    """Raised when Gemini is not configured or an API call fails."""
+
+
+class GeminiClient:
+    """Thin wrapper around the official google-genai SDK."""
+
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or GOOGLE_API_KEY
+        self.chat_model_name = GEMINI_CHAT_MODEL
+        self.embedding_model_name = GEMINI_EMBEDDING_MODEL
+        self._lock = threading.Lock()
+        self._client: Optional[genai.Client] = None
+
+        if self.api_key:
+            self._client = genai.Client(api_key=self.api_key)
+            logger.info(
+                "Gemini configured (chat=%s, embedding=%s)",
+                self.chat_model_name,
+                self.embedding_model_name,
+            )
+        else:
+            logger.error("GOOGLE_API_KEY is not set - AI features will not work.")
+
+    @property
+    def is_ready(self) -> bool:
+        return self._client is not None
+
+    def _require_client(self) -> genai.Client:
+        if self._client is None:
+            raise GeminiUnavailableError(
+                "GOOGLE_API_KEY is not configured. Set it in src/backend/.env"
+            )
+        return self._client
+
+    # --- Text generation ----------------------------------------------------
+    def generate(
+        self,
+        prompt: str,
+        system_instruction: str,
+        history: Optional[List[Dict[str, str]]] = None,
+        temperature: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+    ) -> str:
+        """Generate an answer. `history` is a list of {role, content} dicts."""
+        client = self._require_client()
+
+        contents: List[Any] = []
+        for turn in history or []:
+            text = (turn.get("content") or "").strip()
+            if not text:
+                continue
+            role = "model" if turn.get("role") in ("assistant", "model") else "user"
+            contents.append(types.Content(role=role, parts=[types.Part(text=text)]))
+        contents.append(types.Content(role="user", parts=[types.Part(text=prompt)]))
+
         try:
-            # Check if we found any properties
-            if not properties:
-                responses = {
-                    "formal": f"ขออภัยครับ ทางเราไม่พบข้อมูลอสังหาริมทรัพย์ที่ตรงกับคำถาม '{query}' กรุณาลองใช้คำค้นหาอื่น หรือติดต่อเจ้าหน้าที่เพื่อขอข้อมูลเพิ่มเติม",
-                    "casual": f"เราไม่เจอข้อมูลที่คุณถามเกี่ยวกับ '{query}' ลองถามใหม่ด้วยคำอื่นได้นะ หรือจะติดต่อเจ้าหน้าที่ก็ได้ครับ",
-                    "friendly": f"โอ้! ดูเหมือนว่าเรายังไม่มีข้อมูลเกี่ยวกับ '{query}' เลย ลองถามใหม่แบบอื่นไหมคะ หรือจะคุยกับพนักงานของเราโดยตรงก็ได้นะคะ",
-                    "professional": f"ผมขอแจ้งว่าไม่พบข้อมูลอสังหาริมทรัพย์ที่ตรงตามเงื่อนไข '{query}' ในระบบ ผมแนะนำให้ปรับเปลี่ยนคำค้นหา หรือหากต้องการความช่วยเหลือเพิ่มเติม สามารถติดต่อทีมงานมืออาชีพของเราได้ครับ"
-                }
-                return responses.get(style, responses["formal"])
-            
-            # Create property description based on the data
-            property_descriptions = []
-            for i, prop in enumerate(properties):
-                desc = f"{i+1}. "
-                
-                if "ประเภท" in prop:
-                    desc += f"{prop['ประเภท']} "
-                
-                if "โครงการ" in prop:
-                    desc += f"{prop['โครงการ']} "
-                
-                if "ราคา" in prop:
-                    desc += f"ราคา {prop['ราคา']} บาท "
-                
-                if "รูปแบบ" in prop:
-                    desc += f"({prop['รูปแบบ']}) "
-                
-                nearby = []
-                if "สถานศึกษา" in prop and prop["สถานศึกษา"] != "ไม่มี":
-                    nearby.append(f"ใกล้{prop['สถานศึกษา']}")
-                
-                if "สถานีรถไฟฟ้า" in prop and prop["สถานีรถไฟฟ้า"] != "ไม่มี":
-                    nearby.append(f"ใกล้{prop['สถานีรถไฟฟ้า']}")
-                    
-                if "ห้างสรรพสินค้า" in prop and prop["ห้างสรรพสินค้า"] != "ไม่มี":
-                    nearby.append(f"ใกล้{prop['ห้างสรรพสินค้า']}")
-                    
-                if nearby:
-                    desc += f" {', '.join(nearby)}"
-                    
-                property_descriptions.append(desc)
-            
-            property_text = "\n".join(property_descriptions)
-            
-            intros = {
-                "formal": f"สำหรับคำถามเกี่ยวกับ '{query}' ทางเรามีข้อมูลอสังหาริมทรัพย์ที่น่าสนใจดังนี้:\n\n",
-                "casual": f"เกี่ยวกับ '{query}' ที่คุณถามมา เรามีตัวเลือกเหล่านี้นะ:\n\n",
-                "friendly": f"สำหรับ '{query}' ที่คุณสนใจ มีตัวเลือกน่าสนใจเหล่านี้เลยค่ะ:\n\n",
-                "professional": f"ตามที่คุณสอบถามเกี่ยวกับ '{query}' ผมได้คัดสรรอสังหาริมทรัพย์ที่ตรงกับความต้องการของคุณดังนี้:\n\n"
-            }
-            
-            outros = {
-                "formal": "\n\nท่านสนใจทรัพย์สินรายการใดเป็นพิเศษหรือไม่ ทางเรายินดีให้ข้อมูลเพิ่มเติมครับ",
-                "casual": "\n\nสนใจตัวไหนเป็นพิเศษมั้ย จะได้บอกรายละเอียดเพิ่มเติมให้",
-                "friendly": "\n\nชอบตัวไหนเป็นพิเศษบ้างคะ บอกได้เลยนะ เดี๋ยวเราช่วยดูข้อมูลเพิ่มให้ค่ะ",
-                "professional": "\n\nหากคุณสนใจอสังหาริมทรัพย์รายการใดเป็นพิเศษ ผมสามารถให้ข้อมูลเชิงลึกและจัดการดูพื้นที่จริงให้ได้ครับ"
-            }
-            
-            intro = intros.get(style, intros["formal"])
-            outro = outros.get(style, outros["formal"])
-            
-            return intro + property_text + outro
-            
-        except Exception as e:
-            logger.error(f"Error generating response: {str(e)}")
-            return "ขออภัย เกิดข้อผิดพลาดในการประมวลผลคำตอบ กรุณาลองใหม่อีกครั้ง"
-            
-    def translate(self, text: str, target_language: str = "en") -> str:
-        """
-        Translate text between Thai and English
-        
-        This would use an actual translation model in production
-        """
-        logger.info(f"Translation requested to {target_language}")
-        # Mock implementation
-        return f"[Translated to {target_language}]: {text}"
+            response = client.models.generate_content(
+                model=self.chat_model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=(
+                        GEMINI_TEMPERATURE if temperature is None else temperature
+                    ),
+                    max_output_tokens=(
+                        GEMINI_MAX_OUTPUT_TOKENS
+                        if max_output_tokens is None
+                        else max_output_tokens
+                    ),
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced to the caller
+            logger.exception("Gemini generate_content failed: %s", exc)
+            raise GeminiUnavailableError(str(exc)) from exc
+
+        text = (getattr(response, "text", None) or "").strip()
+        if not text:
+            raise GeminiUnavailableError("Gemini returned an empty response")
+        return text
+
+    # --- Embeddings ---------------------------------------------------------
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed property documents for indexing."""
+        return self._embed(texts, task_type="RETRIEVAL_DOCUMENT")
+
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a single search query."""
+        return self._embed([text], task_type="RETRIEVAL_QUERY")[0]
+
+    def _embed(self, texts: List[str], task_type: str) -> List[List[float]]:
+        client = self._require_client()
+        vectors: List[List[float]] = []
+
+        with self._lock:
+            for start in range(0, len(texts), EMBEDDING_BATCH_SIZE):
+                batch = texts[start : start + EMBEDDING_BATCH_SIZE]
+                try:
+                    result = client.models.embed_content(
+                        model=self.embedding_model_name,
+                        contents=batch,
+                        config=types.EmbedContentConfig(task_type=task_type),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Gemini embed_content failed: %s", exc)
+                    raise GeminiUnavailableError(str(exc)) from exc
+
+                for embedding in result.embeddings or []:
+                    vectors.append(list(embedding.values or []))
+
+        if len(vectors) != len(texts):
+            raise GeminiUnavailableError(
+                f"Expected {len(texts)} embeddings from Gemini but received {len(vectors)}"
+            )
+        return vectors
+
+
+# Shared singleton used across the app.
+gemini = GeminiClient()

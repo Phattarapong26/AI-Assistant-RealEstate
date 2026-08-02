@@ -1,9 +1,16 @@
 /**
- * API client for interacting with the AI Property Consultant backend
+ * API client for the AI Property Consultant backend.
+ *
+ * The backend URL comes from VITE_API_BASE_URL so the same build can point at
+ * a local server during development and at the real server in production.
  */
 
-// Base URL for API calls
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL =
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ||
+  "http://localhost:8000/api";
+
+const TOKEN_KEY = "property_ai_token";
+const CURRENT_USER_KEY = "property_ai_current_user";
 
 // Types
 export interface PropertyQuery {
@@ -22,6 +29,7 @@ export interface ChatResponse {
   session_id?: string;
   chat_room_id?: string;
   properties?: Array<Record<string, string>>;
+  messages?: ChatHistory["messages"];
 }
 
 export interface ChatHistory {
@@ -44,253 +52,179 @@ export interface ConsultationStyles {
   [key: string]: string;
 }
 
-/**
- * Send a chat message to the AI
- */
-export const sendChatMessage = async (queryData: PropertyQuery): Promise<ChatResponse> => {
-  try {
-    // สร้าง copy ของ queryData เพื่อปรับข้อมูลก่อนส่ง
-    const adjustedQueryData = { ...queryData };
-    
-    // ถ้ามี chat_room_id แต่ไม่มี session_id ให้ใช้ chat_room_id เป็น session_id
-    if (adjustedQueryData.chat_room_id && !adjustedQueryData.session_id) {
-      adjustedQueryData.session_id = adjustedQueryData.chat_room_id;
-      // ลบ chat_room_id ออกเพื่อไม่ให้ API สับสน
-      delete adjustedQueryData.chat_room_id;
-    }
-    
-    // เพิ่ม flag เพื่อบอก backend ให้บันทึกข้อความนี้
-    adjustedQueryData.save_message = true;
-    
-    // เพิ่มเวลาปัจจุบันในรูปแบบที่ backend เข้าใจได้
-    adjustedQueryData.timestamp = Date.now();
-    
-    const response = await fetch(`${API_BASE_URL}/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(adjustedQueryData),
-    });
+export interface AuthUser {
+  id: string;
+  name: string;
+  email: string;
+}
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API error: ${response.status} - ${errorText}`);
-    }
+// --- Session token helpers ---------------------------------------------------
+export const getAuthToken = (): string | null => localStorage.getItem(TOKEN_KEY);
 
-    const data = await response.json();
-    
-    // ถ้าได้รับ session_id จาก API แต่ไม่มี chat_room_id ให้ใช้ session_id เป็น chat_room_id
-    if (data.session_id && !data.chat_room_id) {
-      data.chat_room_id = data.session_id;
-    }
-    
-    return data;
-  } catch (error) {
-    console.error('Error sending chat message:', error);
-    throw new Error('Failed to send message. Please try again.');
-  }
+export const setAuthSession = (token: string, user: AuthUser): void => {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
 };
 
-/**
- * Get chat history for a specific chat room
- */
+export const clearAuthSession = (): void => {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(CURRENT_USER_KEY);
+};
+
+const authHeaders = (): Record<string, string> => {
+  const token = getAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+/** Turn a failed response into a readable Thai error message. */
+const readError = async (response: Response, fallback: string): Promise<string> => {
+  try {
+    const data = await response.json();
+    if (typeof data?.detail === "string") return data.detail;
+  } catch {
+    /* the body was not JSON */
+  }
+  return fallback;
+};
+
+// --- Authentication ----------------------------------------------------------
+export const registerUser = async (
+  name: string,
+  email: string,
+  password: string
+): Promise<AuthUser> => {
+  const response = await fetch(`${API_BASE_URL}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, email, password }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readError(response, "ลงทะเบียนไม่สำเร็จ กรุณาลองใหม่อีกครั้ง"));
+  }
+
+  const data = await response.json();
+  setAuthSession(data.token, data.user);
+  return data.user;
+};
+
+export const loginUser = async (email: string, password: string): Promise<AuthUser> => {
+  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readError(response, "อีเมลหรือรหัสผ่านไม่ถูกต้อง"));
+  }
+
+  const data = await response.json();
+  setAuthSession(data.token, data.user);
+  return data.user;
+};
+
+// --- Chat --------------------------------------------------------------------
+export const sendChatMessage = async (queryData: PropertyQuery): Promise<ChatResponse> => {
+  const payload: PropertyQuery = { ...queryData };
+
+  if (payload.chat_room_id && !payload.session_id) {
+    payload.session_id = payload.chat_room_id;
+  }
+  payload.save_message = true;
+  payload.timestamp = Date.now();
+
+  const response = await fetch(`${API_BASE_URL}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      await readError(response, "ส่งข้อความไม่สำเร็จ กรุณาลองใหม่อีกครั้ง")
+    );
+  }
+
+  const data: ChatResponse = await response.json();
+  if (data.session_id && !data.chat_room_id) {
+    data.chat_room_id = data.session_id;
+  }
+  return data;
+};
+
+/** Load a conversation that is stored on the server. */
 export const getChatRoomHistory = async (chatRoomId: string): Promise<ChatHistory> => {
   try {
-    // เปลี่ยนเป็น POST request ด้วย flag get_history
     const response = await fetch(`${API_BASE_URL}/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
         session_id: chatRoomId,
         chat_room_id: chatRoomId,
-        query: '',  // ส่ง query ว่างเพื่อบ่งชี้ว่าต้องการเรียกประวัติ
-        get_history: true,  // flag สำหรับบอก backend ว่าต้องการดึงประวัติ
-        consultation_style: localStorage.getItem("consultationStyle") || "formal"
+        query: "",
+        get_history: true,
+        consultation_style: localStorage.getItem("consultationStyle") || "formal",
       }),
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.warn(`API error when fetching chat history: ${response.status} - ${errorText}`);
-      
-      // สร้าง empty history object สำหรับกรณีที่ API ยังไม่รองรับ
-      return {
-        chat_room_id: chatRoomId,
-        messages: []
-      };
+      return { chat_room_id: chatRoomId, messages: [] };
     }
 
     const data = await response.json();
-    
-    // ถ้าไม่มี messages จะสร้าง empty array
-    if (!data.messages) {
-      data.messages = [];
-    }
-    
-    return data;
+    return { chat_room_id: chatRoomId, messages: data.messages ?? [] };
   } catch (error) {
-    console.error('Error fetching chat history:', error);
-    // สร้าง empty history object แทนที่จะ throw error
-    return {
-      chat_room_id: chatRoomId,
-      messages: []
-    };
+    console.error("Error fetching chat history:", error);
+    return { chat_room_id: chatRoomId, messages: [] };
   }
 };
 
 /**
- * Upload property data file
+ * The backend stores every message as part of /chat, so the UI does not need
+ * to push history separately. Kept for API compatibility with the components.
  */
+export const saveChatHistory = async (
+  _chatRoomId?: string,
+  _messages?: unknown
+): Promise<boolean> => true;
+
+// --- Property catalogue ------------------------------------------------------
 export const uploadPropertyFile = async (
-  file: File, 
-  consultationStyle: string = 'formal'
+  file: File,
+  consultationStyle: string = "formal"
 ): Promise<UploadResponse> => {
-  try {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('consultation_style', consultationStyle);
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("consultation_style", consultationStyle);
 
-    const response = await fetch(`${API_BASE_URL}/upload`, {
-      method: 'POST',
-      body: formData,
-    });
+  const response = await fetch(`${API_BASE_URL}/upload`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: formData,
+  });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API error: ${response.status} - ${errorText}`);
-    }
-
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error('Error uploading file:', error);
-    throw new Error('Failed to upload file. Please try again.');
+  if (!response.ok) {
+    throw new Error(
+      await readError(response, "อัปโหลดไฟล์ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง")
+    );
   }
+
+  return response.json();
 };
 
-/**
- * Get available consultation styles
- */
 export const getConsultationStyles = async (): Promise<ConsultationStyles> => {
   try {
     const response = await fetch(`${API_BASE_URL}/styles`);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API error: ${response.status} - ${errorText}`);
-    }
-
-    const data = await response.json();
-    return data;
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return await response.json();
   } catch (error) {
-    console.error('Error fetching consultation styles:', error);
-    // Return default styles if API fails
+    console.error("Error fetching consultation styles:", error);
     return {
       formal: "ทางการ",
       casual: "ทั่วไป",
       friendly: "เป็นกันเอง",
-      professional: "มืออาชีพ"
+      professional: "มืออาชีพ",
     };
-  }
-};
-
-/**
- * บันทึกประวัติการแชทลงฐานข้อมูล
- */
-export const saveChatHistory = async (chatRoomId: string, messages: Array<{
-  role: "user" | "assistant";
-  content: string;
-  timestamp: number;
-  properties?: Array<Record<string, string>>;
-}>): Promise<boolean> => {
-  try {
-    console.log("เรียกใช้ API saveChatHistory:", chatRoomId);
-    
-    // ลองวิธีใหม่โดยใช้ endpoint /chat
-    // ดึงข้อความล่าสุด (คู่สุดท้าย) เพื่อส่งไปให้ backend บันทึกโดยตรง
-    if (messages.length >= 2) {
-      const lastUserMsg = messages.slice().reverse().find(msg => msg.role === "user");
-      const lastAssistantMsg = messages.slice().reverse().find(msg => msg.role === "assistant");
-      
-      if (lastUserMsg && lastAssistantMsg) {
-        console.log("ส่งข้อความล่าสุดเพื่อบันทึกประวัติ");
-        
-        const response = await fetch(`${API_BASE_URL}/chat`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ 
-            session_id: chatRoomId,
-            chat_room_id: chatRoomId,
-            query: lastUserMsg.content,
-            consultation_style: localStorage.getItem("consultationStyle") || "formal",
-            // ส่งข้อความทั้งหมดไปด้วยเผื่อ backend ต้องการ
-            history: messages.map(msg => ({
-              role: msg.role,
-              content: msg.content,
-              timestamp: msg.timestamp
-            }))
-          }),
-        });
-        
-        console.log("สถานะการตอบกลับ:", response.status, response.statusText);
-        
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error("ข้อความผิดพลาด:", errorText);
-          return false;
-        }
-        
-        console.log("บันทึกประวัติสำเร็จ");
-        return true;
-      }
-    }
-    
-    // ถ้าไม่มีข้อความล่าสุด หรือมีข้อความน้อยกว่า 2 ข้อความ
-    // ให้ลองส่งแบบเดิม
-    const apiUrl = `${API_BASE_URL}/chat`;
-    
-    // สร้างข้อมูลเพื่อส่งไปยัง API
-    const payload = { 
-      session_id: chatRoomId,
-      chat_room_id: chatRoomId,
-      query: "save_history",
-      // ทดลองส่งแบบต่างๆ
-      action: "save_history",
-      command: "save",
-      consultation_style: localStorage.getItem("consultationStyle") || "formal",
-      messages: messages 
-    };
-    
-    console.log("ส่งข้อมูลเพื่อบันทึกประวัติ:", JSON.stringify(payload).substring(0, 500) + "...");
-    
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    console.log("สถานะการตอบกลับ:", response.status, response.statusText);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("ข้อความผิดพลาด:", errorText);
-      throw new Error(`API error: ${response.status} - ${errorText}`);
-    }
-
-    const responseData = await response.json();
-    console.log("ข้อมูลตอบกลับ:", responseData);
-    
-    return true;
-  } catch (error) {
-    console.error('Error saving chat history:', error);
-    // ไม่ throw error เพื่อไม่ให้กระทบกับ UX
-    return false;
   }
 };

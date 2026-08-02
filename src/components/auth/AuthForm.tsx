@@ -7,22 +7,14 @@ import { Label } from "@/components/ui/label";
 import { Eye, EyeOff, Mail, Lock, User } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/components/ui/use-toast";
-
-// Simple mock user storage for demo purposes
-const USERS_STORAGE_KEY = "property_ai_users";
-const CURRENT_USER_KEY = "property_ai_current_user";
-
-interface User {
-  id: string;
-  email: string;
-  name: string;
-  password: string; // In a real app, this would be hashed
-}
+import { useAuth } from "@/context/AuthContext";
+import { loginUser, registerUser } from "@/frontend/api";
 
 export function AuthForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
+  const { login } = useAuth();
   const navigate = useNavigate();
 
   // Login form state
@@ -36,87 +28,54 @@ export function AuthForm() {
 
   const toggleShowPassword = () => setShowPassword(!showPassword);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    setTimeout(() => {
-      const usersJson = localStorage.getItem(USERS_STORAGE_KEY);
-      const users: User[] = usersJson ? JSON.parse(usersJson) : [];
-      
-      const user = users.find(u => u.email === loginEmail && u.password === loginPassword);
-      
-      if (user) {
-        // Store current user
-        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify({
-          id: user.id,
-          email: user.email,
-          name: user.name
-        }));
-        
-        toast({
-          title: "เข้าสู่ระบบสำเร็จ",
-          description: `ยินดีต้อนรับกลับ ${user.name}`,
-        });
-        
-        navigate("/");
-      } else {
-        toast({
-          title: "เข้าสู่ระบบไม่สำเร็จ",
-          description: "อีเมลหรือรหัสผ่านไม่ถูกต้อง",
-          variant: "destructive",
-        });
-      }
-      
+    try {
+      const user = await loginUser(loginEmail, loginPassword);
+      login(user);
+      toast({
+        title: "เข้าสู่ระบบสำเร็จ",
+        description: `ยินดีต้อนรับกลับ ${user.name}`,
+      });
+      navigate("/");
+    } catch (error) {
+      toast({
+        title: "เข้าสู่ระบบไม่สำเร็จ",
+        description:
+          error instanceof Error ? error.message : "อีเมลหรือรหัสผ่านไม่ถูกต้อง",
+        variant: "destructive",
+      });
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    setTimeout(() => {
-      const usersJson = localStorage.getItem(USERS_STORAGE_KEY);
-      const users: User[] = usersJson ? JSON.parse(usersJson) : [];
-      
-      // Check if email already exists
-      if (users.some(u => u.email === registerEmail)) {
-        toast({
-          title: "ลงทะเบียนไม่สำเร็จ",
-          description: "อีเมลนี้ถูกใช้งานแล้ว กรุณาใช้อีเมลอื่น",
-          variant: "destructive",
-        });
-        setIsLoading(false);
-        return;
-      }
-      
-      // Create new user
-      const newUser: User = {
-        id: crypto.randomUUID(),
-        email: registerEmail,
-        name: registerName,
-        password: registerPassword,
-      };
-      
-      users.push(newUser);
-      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
-      
-      // Log user in
-      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify({
-        id: newUser.id,
-        email: newUser.email,
-        name: newUser.name
-      }));
-      
+    try {
+      const user = await registerUser(registerName, registerEmail, registerPassword);
+      login(user);
       toast({
         title: "ลงทะเบียนสำเร็จ",
         description: "ยินดีต้อนรับสู่ระบบ AI Property Guru",
       });
-      
       navigate("/");
+    } catch (error) {
+      toast({
+        title: "ลงทะเบียนไม่สำเร็จ",
+        description:
+          error instanceof Error
+            ? error.message
+            : "ไม่สามารถลงทะเบียนได้ กรุณาลองใหม่อีกครั้ง",
+        variant: "destructive",
+      });
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   return (

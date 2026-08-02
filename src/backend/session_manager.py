@@ -1,119 +1,109 @@
+"""Conversation sessions with durable storage.
 
-import logging
-from typing import Dict, List, Any, Optional
-import secrets
-from datetime import datetime, timedelta
+Chat history is what makes follow-up questions ("แล้วถูกกว่านี้มีไหม") work,
+so it is stored on disk instead of only in memory: a restart of the API must
+not wipe an ongoing customer conversation.
+"""
+
 import json
+import logging
+import secrets
+import threading
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+from config import DATA_DIR, MAX_HISTORY_TURNS
 
 logger = logging.getLogger(__name__)
 
+SESSIONS_PATH = DATA_DIR / "sessions.json"
+
+
 class SessionManager:
-    def __init__(self, mongodb_manager=None):
-        """
-        Manages chat sessions for the AI property consultant
-        """
-        self.sessions = {}  # In-memory sessions (would use MongoDB in production)
-        self.mongodb_manager = mongodb_manager
-        logger.info("Initialized SessionManager")
-        
-    def create_session(self, user_id: Optional[str] = None) -> str:
-        """
-        Create a new chat session
-        """
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.sessions: Dict[str, Dict[str, Any]] = {}
+        self._load()
+
+    # --- Persistence --------------------------------------------------------
+    def _load(self) -> None:
         try:
-            session_id = f"session_{secrets.token_hex(8)}"
-            timestamp = datetime.now()
-            
-            session_data = {
-                "session_id": session_id,
-                "user_id": user_id,
-                "created_at": timestamp,
-                "last_activity": timestamp,
-                "messages": []
-            }
-            
-            # Store in memory
-            self.sessions[session_id] = session_data
-            
-            # Store in MongoDB if available
-            if self.mongodb_manager:
-                self.mongodb_manager.create_session(session_id, user_id)
-                
-            logger.info(f"Created new session: {session_id}")
-            return session_id
-        except Exception as e:
-            logger.error(f"Error creating session: {str(e)}")
-            raise
-            
-    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve a session by ID
-        """
-        # Try in-memory first
-        if session_id in self.sessions:
-            return self.sessions[session_id]
-            
-        # Try MongoDB if available
-        if self.mongodb_manager:
-            return self.mongodb_manager.get_session(session_id)
-            
-        return None
-        
-    def add_message(self, session_id: str, role: str, content: str) -> bool:
-        """
-        Add a message to a session
-        """
+            if SESSIONS_PATH.exists():
+                self.sessions = json.loads(SESSIONS_PATH.read_text(encoding="utf-8"))
+                logger.info("Loaded %d sessions", len(self.sessions))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Could not load sessions, starting empty: %s", exc)
+            self.sessions = {}
+
+    def _save(self) -> None:
         try:
-            session = self.get_session(session_id)
+            SESSIONS_PATH.write_text(
+                json.dumps(self.sessions, ensure_ascii=False), encoding="utf-8"
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Could not save sessions: %s", exc)
+
+    # --- Sessions -----------------------------------------------------------
+    def ensure_session(self, session_id: Optional[str] = None) -> str:
+        with self._lock:
+            sid = session_id or f"session_{secrets.token_hex(8)}"
+            if sid not in self.sessions:
+                now = datetime.utcnow().isoformat()
+                self.sessions[sid] = {
+                    "session_id": sid,
+                    "created_at": now,
+                    "last_activity": now,
+                    "messages": [],
+                }
+                self._save()
+            return sid
+
+    def add_message(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        properties: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        with self._lock:
+            session = self.sessions.get(session_id)
             if not session:
-                logger.warning(f"Session not found: {session_id}")
-                return False
-                
-            timestamp = datetime.now()
-            message = {
+                return
+            message: Dict[str, Any] = {
                 "role": role,
                 "content": content,
-                "timestamp": timestamp
+                "timestamp": int(datetime.utcnow().timestamp() * 1000),
             }
-            
-            # Update in-memory
-            if session_id in self.sessions:
-                self.sessions[session_id]["messages"].append(message)
-                self.sessions[session_id]["last_activity"] = timestamp
-                
-            # Update in MongoDB if available
-            if self.mongodb_manager:
-                self.mongodb_manager.add_message(session_id, message)
-                
-            return True
-        except Exception as e:
-            logger.error(f"Error adding message: {str(e)}")
-            return False
-            
+            if properties:
+                message["properties"] = properties
+            session["messages"].append(message)
+            session["last_activity"] = datetime.utcnow().isoformat()
+            self._save()
+
     def get_messages(self, session_id: str) -> List[Dict[str, Any]]:
-        """
-        Get all messages in a session
-        """
-        session = self.get_session(session_id)
-        if not session:
-            return []
-            
-        return session.get("messages", [])
-        
-    def clean_old_sessions(self, max_age_hours: int = 24) -> int:
-        """
-        Remove sessions older than max_age_hours
-        """
-        cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
-        count = 0
-        
-        # Clean in-memory sessions
-        session_ids = list(self.sessions.keys())
-        for session_id in session_ids:
-            last_activity = self.sessions[session_id].get("last_activity")
-            if last_activity and last_activity < cutoff_time:
-                del self.sessions[session_id]
-                count += 1
-                
-        logger.info(f"Cleaned {count} old sessions")
-        return count
+        session = self.sessions.get(session_id)
+        return list(session.get("messages", [])) if session else []
+
+    def get_history(self, session_id: str, max_turns: int = MAX_HISTORY_TURNS) -> List[Dict[str, str]]:
+        """Recent turns in the {role, content} shape the model expects."""
+        messages = self.get_messages(session_id)[-(max_turns * 2) :]
+        return [{"role": m["role"], "content": m["content"]} for m in messages]
+
+    def clean_old_sessions(self, max_age_hours: int = 24 * 30) -> int:
+        cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+        removed = 0
+        with self._lock:
+            for sid in list(self.sessions.keys()):
+                try:
+                    last = datetime.fromisoformat(self.sessions[sid]["last_activity"])
+                except (KeyError, ValueError):
+                    continue
+                if last < cutoff:
+                    del self.sessions[sid]
+                    removed += 1
+            if removed:
+                self._save()
+        return removed
+
+
+session_manager = SessionManager()

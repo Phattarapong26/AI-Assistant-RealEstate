@@ -1,110 +1,38 @@
+# Backend — AI Property Consultant
 
-# AI Property Consultant Backend
+บริการเบื้องหลังของระบบผู้ช่วยขายอสังหาริมทรัพย์ ทำหน้าที่รับไฟล์รายการทรัพย์ แปลงเป็นดัชนีค้นหาเชิงความหมาย และตอบคำถามลูกค้าด้วย Google Gemini
 
-This is the FastAPI backend for the AI Property Consultant application. It provides API endpoints for property data processing, chat functionality, and file uploads.
+## สิ่งที่ต้องเตรียม
 
-## Getting Started
+- Python 3.10 ขึ้นไป
+- Google Gemini API key
 
-### Prerequisites
+## การตั้งค่า
 
-- Python 3.8 or higher
-- MongoDB (running locally or accessible via connection string)
+คัดลอก `.env.example` เป็น `.env` แล้วกรอกค่าต่อไปนี้
 
-### Installation
+| ตัวแปร | คำอธิบาย |
+| --- | --- |
+| `GOOGLE_API_KEY` | กุญแจสำหรับเรียกใช้ Google Gemini |
+| `APP_SECRET` | คีย์สุ่มสำหรับลงลายเซ็นเซสชันผู้ใช้ |
+| `ALLOWED_ORIGINS` | โดเมนของหน้าเว็บที่อนุญาตให้เรียก API |
 
-1. Create a virtual environment (recommended):
-   ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+## การเรียกใช้งาน
 
-2. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-
-3. Run the application:
-   ```
-   python run.py
-   ```
-
-The API will be available at http://localhost:8000
-
-## API Endpoints
-
-### Chat Endpoint
-
-```
-POST /api/chat
+```bash
+pip install -r requirements.txt
+python run.py
 ```
 
-Request body:
-```json
-{
-  "query": "ต้องการซื้อคอนโดใกล้ BTS",
-  "consultation_style": "formal",
-  "session_id": "optional-session-id"
-}
-```
+## จุดเชื่อมต่อหลัก (API)
 
-Response:
-```json
-{
-  "response": "สำหรับคำถามเกี่ยวกับ 'ต้องการซื้อคอนโดใกล้ BTS' ทางเรามีข้อมูลอสังหาริมทรัพย์ที่น่าสนใจดังนี้...",
-  "session_id": "session_12345abcde",
-  "properties": [...]
-}
-```
+| Endpoint | หน้าที่ |
+| --- | --- |
+| `POST /api/auth/register` | สมัครบัญชีผู้ใช้ |
+| `POST /api/auth/login` | เข้าสู่ระบบและรับโทเคน |
+| `POST /api/upload` | อัปโหลดไฟล์ทรัพย์ (CSV/Excel) เพื่อสร้างดัชนีค้นหา |
+| `POST /api/chat` | ส่งคำถามและรับคำตอบพร้อมรายการทรัพย์ที่เกี่ยวข้อง |
+| `GET /api/styles` | รายการโทนการให้คำปรึกษาที่เลือกได้ |
+| `GET /api/health` | ตรวจสอบสถานะระบบ |
 
-### File Upload Endpoint
-
-```
-POST /api/upload
-```
-
-Form data:
-- `file`: Excel or CSV file with property data
-- `consultation_style`: Consultation style (optional)
-
-Response:
-```json
-{
-  "message": "อัพโหลดข้อมูลอสังหาริมทรัพย์สำเร็จ",
-  "file_id": "upload_12345abcde",
-  "num_records": 42
-}
-```
-
-### Get Consultation Styles
-
-```
-GET /api/styles
-```
-
-Response:
-```json
-{
-  "formal": "ทางการ",
-  "casual": "ทั่วไป",
-  "friendly": "เป็นกันเอง",
-  "professional": "มืออาชีพ"
-}
-```
-
-## File Upload Format
-
-The uploaded Excel or CSV file should contain the following columns (in Thai):
-
-- ประเภท (Type) - บ้าน/คอนโด/ทาวน์โฮม, etc.
-- โครงการ (Project name)
-- ราคา (Price)
-- รูปแบบ (Format) - เช่า/ขาย (Rent/Sell)
-- รูป (Image) - URL to property image
-- ตำแหน่ง (Location)
-- สถานศึกษา (Educational institutions nearby)
-- สถานีรถไฟฟ้า (BTS/MRT stations nearby)
-- ห้างสรรพสินค้า (Shopping malls nearby)
-- โรงพยาบาล (Hospitals nearby)
-- สนามบิน (Airports nearby)
-
-Missing data should be filled with "ไม่มี" (None/Not available).
+ข้อมูลดัชนีทรัพย์ ประวัติการสนทนา และบัญชีผู้ใช้ ถูกจัดเก็บในโฟลเดอร์ `data/`
