@@ -58,9 +58,11 @@
 
 ![Homepage](src/image/homepage.png)
 
-![Chat 1](src/image/chat1.png)
+![Chat 1](src/image/ถาม.png)
 
-![Chat 2](src/image/chat2.png)
+![Chat 2](src/image/ตอบ.png)
+
+![Chat 3](src/image/สถานะpng)
 
 ---
 
