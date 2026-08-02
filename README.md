@@ -62,7 +62,7 @@
 
 ![Chat 2](src/image/ตอบ.png)
 
-![Chat 3](src/image/สถานะpng)
+![Chat 3](src/image/สถานะ.png)
 
 ---
 
