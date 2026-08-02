@@ -169,6 +169,12 @@ def answer_property_question(
     search_query = build_search_query(query, history)
     properties = vector_store.search(search_query, top_k=MAX_RESULTS)
     logger.info("Retrieved %d properties for query: %s", len(properties), search_query)
+    
+    # Filter properties based on budget signals
+    filtered_properties = filter_properties_by_budget(query, history, properties)
+    if filtered_properties != properties:
+        logger.info("Filtered properties from %d to %d based on budget", len(properties), len(filtered_properties))
+        properties = filtered_properties
 
     system_instruction = consultant_system_prompt(style)
     if properties:
@@ -182,6 +188,63 @@ def answer_property_question(
         history=history,
     )
     return answer, properties
+
+
+def filter_properties_by_budget(query: str, history: List[Dict[str, str]], properties: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Filter properties based on budget signals from user."""
+    if not properties:
+        return properties
+    
+    # Check for low budget signals
+    low_budget_keywords = ["จน", "งบน้อย", "ไม่มีเงิน", "งบจำกัด", "งบประหยัด", "ถูก", "ราคาต่ำ"]
+    
+    # Check current query and recent history
+    combined_text = query.lower()
+    for msg in history[-3:]:  # Check last 3 messages
+        if msg.get("role") == "user":
+            combined_text += " " + msg.get("content", "").lower()
+    
+    has_low_budget_signal = any(keyword in combined_text for keyword in low_budget_keywords)
+    
+    # Extract explicit budget from query
+    import re
+    budget_match = re.search(r'งบ\s*(\d+(?:\.\d+)?)\s*(?:ล้าน|ล้)?', combined_text)
+    explicit_budget = None
+    if budget_match:
+        budget_value = float(budget_match.group(1))
+        # Assume millions if no unit specified
+        explicit_budget = budget_value * 1_000_000
+    
+    # Filter properties
+    filtered = []
+    max_budget = None
+    
+    if has_low_budget_signal:
+        max_budget = 3_000_000  # 3 million baht for low budget
+    elif explicit_budget:
+        max_budget = explicit_budget * 1.1  # Allow 10% flexibility
+    
+    if max_budget:
+        for prop in properties:
+            price_str = str(prop.get("ราคา", "0"))
+            # Clean price string
+            price_str = price_str.replace(",", "").replace("บาท", "").replace(" ", "")
+            try:
+                price = float(price_str)
+                if price <= max_budget:
+                    filtered.append(prop)
+            except (ValueError, TypeError):
+                # If we can't parse price, include it
+                filtered.append(prop)
+        
+        # If filtering removed everything, return cheapest 2-3 properties
+        if not filtered and properties:
+            sorted_props = sorted(properties, key=lambda p: float(str(p.get("ราคา", "999999999")).replace(",", "").replace("บาท", "").replace(" ", "")) if str(p.get("ราคา", "")).replace(",", "").replace("บาท", "").replace(" ", "").replace(".", "").isdigit() else 999999999)
+            filtered = sorted_props[:min(3, len(sorted_props))]
+        
+        return filtered if filtered else properties
+    
+    return properties
 
 
 def answer_greeting(query: str, history: List[Dict[str, str]]) -> str:

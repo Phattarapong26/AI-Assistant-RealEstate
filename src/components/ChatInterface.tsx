@@ -732,58 +732,14 @@ export default function ChatInterface() {
       // Create enhanced property descriptions if properties exist
       let enhancedResponse = response.response;
       
-      // If there are properties, replace the plain text with enhanced descriptions
-      if (response.properties && response.properties.length > 0) {
-        // Get the closing phrase based on style
-        const closingPhrase = getRandomPhrase('closing');
-        
-        // Create enhanced descriptions for each property
-        const enhancedProperties = response.properties.map((property, index) => {
-          const propertyLabel = language === 'thai' ? `Property ${index + 1}` : `Property ${index + 1}`;
-          return `${propertyLabel}\n${enhancePropertyDescription(property)}`;
-        }).join('\n\n');
-        
-        // Combine with appropriate introduction and closing
-        enhancedResponse = `${getRandomPhrase('positive')}\n\n${enhancedProperties}\n\n${closingPhrase}`;
-      } else {
-        // ตรวจสอบว่าเป็นการตอบแบบไม่พบข้อมูลหรือไม่
-        const thaiNoDataPhrases = ["ไม่พบข้อมูล", "ไม่เจอข้อมูล", "ไม่มีข้อมูล"];
-        const englishNoDataPhrases = ["no data found", "no information available", "couldn't find any information", "don't have information", "don't have data", "not found"];
-        
-        // กรณีตอบแบบไม่พบข้อมูล
-        const isThaiNoDataResponse = thaiNoDataPhrases.some(phrase => response.response.includes(phrase));
-        const isEnglishNoDataResponse = englishNoDataPhrases.some(phrase => response.response.toLowerCase().includes(phrase));
-        
-        if (isThaiNoDataResponse || isEnglishNoDataResponse) {
-          // สร้างข้อความตามภาษาที่ต้องการ
-          const negativePhrase = getRandomPhrase('negative');
-          
-          if (language === 'thai' && isEnglishNoDataResponse) {
-            // กรณีข้อความตอบเป็นภาษาอังกฤษแต่ต้องการภาษาไทย
-            enhancedResponse = `${negativePhrase} ไม่พบข้อมูลที่คุณต้องการในระบบ`;
-          } else if (language === 'english' && isThaiNoDataResponse) {
-            // กรณีข้อความตอบเป็นภาษาไทยแต่ต้องการภาษาอังกฤษ
-            enhancedResponse = `${negativePhrase} We couldn't find the information you're looking for.`;
-          } else {
-            // กรณีภาษาของข้อความตอบตรงกับภาษาที่ต้องการ
-            enhancedResponse = `${negativePhrase} ${response.response}`;
-          }
-        } else {
-          // กรณีเป็นข้อความทั่วไป ตรวจสอบว่าภาษาตรงกับที่ต้องการหรือไม่
-          const hasThaiChars = /[\u0E00-\u0E7F]/.test(response.response);
-          
-          if (language === 'english' && hasThaiChars) {
-            // ข้อความเป็นภาษาไทยแต่ต้องการภาษาอังกฤษ
-            // ส่งกลับข้อความทั่วไปที่เป็นภาษาอังกฤษ
-            enhancedResponse = `I apologize, but I'm not able to fully translate the response. Here's what I can tell you: ${response.response}`;
-          } else if (language === 'thai' && !hasThaiChars) {
-            // ข้อความเป็นภาษาอังกฤษแต่ต้องการภาษาไทย
-            enhancedResponse = `ขออภัย ฉันไม่สามารถแปลคำตอบได้ทั้งหมด นี่คือสิ่งที่ฉันบอกคุณได้: ${response.response}`;
-          } else {
-            // ภาษาตรงกับที่ต้องการ
-            enhancedResponse = response.response;
-          }
-        }
+      // ใช้คำตอบจาก AI โดยตรง ไม่แทรก phrases หรือ format เพิ่มเติม
+      // AI ได้รับการ train ให้ตอบเป็นย่อหน้าที่สมบูรณ์แล้ว
+      
+      // ตรวจสอบกรณีไม่มีข้อมูล (optional - เพื่อให้แน่ใจว่ามี fallback)
+      if (!response.response || response.response.trim() === '') {
+        enhancedResponse = language === 'thai' 
+          ? "ขออภัย ไม่สามารถสร้างคำตอบได้ในขณะนี้"
+          : "Sorry, unable to generate a response at this time.";
       }
       
       const assistantMessage: Message = {
