@@ -16,7 +16,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 GEMINI_CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
 GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 GEMINI_TEMPERATURE = float(os.getenv("GEMINI_TEMPERATURE", "0.6"))
-GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "1024"))
+GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "3072"))
 EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "64"))
 
 # --- Storage ----------------------------------------------------------------
@@ -29,7 +29,7 @@ VECTOR_META_PATH = DATA_DIR / "property_index.json"
 VECTOR_SIMILARITY_THRESHOLD = float(os.getenv("VECTOR_SIMILARITY_THRESHOLD", "0.45"))
 MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))
 # Hard cap on rows handed to the LLM (Hybrid RAG anti data-dump guard).
-MAX_CONTEXT_PROPERTIES = int(os.getenv("MAX_CONTEXT_PROPERTIES", "3"))
+MAX_CONTEXT_PROPERTIES = int(os.getenv("MAX_CONTEXT_PROPERTIES", "4"))
 KEYWORD_BOOST = float(os.getenv("KEYWORD_BOOST", "0.06"))
 MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "8"))
 

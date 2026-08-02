@@ -15,7 +15,7 @@ HEADING_PATTERN = re.compile(r"^\s*#{1,6}\s*")
 FIELD_LABEL_PATTERN = re.compile(
     r"(ราคา|ประเภท|โครงการ|ทำเล|ตำแหน่ง|รูปแบบ|จุดเด่น|ข้อดี|ข้อควรพิจารณา)\s*[:：]\s*"
 )
-MAX_PARAGRAPHS = 3
+MAX_PARAGRAPHS = 6
 
 
 def _strip_inline_markup(text: str) -> str:

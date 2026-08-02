@@ -10,7 +10,10 @@ export function useTypewriter(
   enabled: boolean,
   options?: { charsPerTick?: number; tickMs?: number; onUpdate?: () => void }
 ) {
-  const { charsPerTick = 3, tickMs = 18, onUpdate } = options ?? {};
+  // Long, guru-length answers should still finish in a few seconds, so the
+  // reveal rate scales with the length of the message.
+  const adaptiveChars = Math.max(3, Math.ceil(text.length / 260));
+  const { charsPerTick = adaptiveChars, tickMs = 16, onUpdate } = options ?? {};
   const [visible, setVisible] = useState(enabled ? "" : text);
   const updateRef = useRef(onUpdate);
   updateRef.current = onUpdate;
