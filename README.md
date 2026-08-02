@@ -179,13 +179,14 @@ if not matching_properties:
 
 ## ขอบเขตที่ระบบยังไม่ครอบคลุม (Out of Scope)
 
-เพื่อความโปร่งใสในการส่งมอบ ระบบเวอร์ชันนี้ยัง **ไม่** รวมสิ่งต่อไปนี้:
+ระบบเวอร์ชันนี้ยัง **ไม่** รวมสิ่งต่อไปนี้:
 
 - ❌ การประเมินราคาหรือพยากรณ์แนวโน้มตลาด (market forecasting)
 - ❌ การเชื่อมต่อ LINE OA, Facebook Messenger, WhatsApp
 - ❌ การจองนัดชมห้องหรือทำสัญญาออนไลน์
 - ❌ Integration กับ CRM ภายนอก (Salesforce, HubSpot)
 - ❌ Dashboard analytics สำหรับ manager (lead source, conversion funnel)
+- ❌ ยังไม่ได้ทำระบบ Auth เพื่อจัดเก็บเข้า DB เพราะเป็นโปรเจ็ค LLM เพื่อโต้ตอบเท่านั้น
 
 **ทั้งหมดนี้สามารถพัฒนาต่อยอดได้** — สถาปัตยกรรมปัจจุบันรองรับการขยาย:
 - API-first design → ง่ายต่อการเชื่อม webhook และ third-party services
