@@ -28,6 +28,8 @@ VECTOR_META_PATH = DATA_DIR / "property_index.json"
 # --- Retrieval tuning -------------------------------------------------------
 VECTOR_SIMILARITY_THRESHOLD = float(os.getenv("VECTOR_SIMILARITY_THRESHOLD", "0.45"))
 MAX_RESULTS = int(os.getenv("MAX_RESULTS", "5"))
+# Hard cap on rows handed to the LLM (Hybrid RAG anti data-dump guard).
+MAX_CONTEXT_PROPERTIES = int(os.getenv("MAX_CONTEXT_PROPERTIES", "3"))
 KEYWORD_BOOST = float(os.getenv("KEYWORD_BOOST", "0.06"))
 MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "8"))
 

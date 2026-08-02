@@ -9,6 +9,9 @@ import { sendChatMessage, getChatRoomHistory, saveChatHistory } from "../fronten
 import { createContext } from "react";
 import { useChats } from "@/hooks/useChats";
 import { useParams } from "react-router-dom";
+import { AnimatePresence } from "framer-motion";
+import TypingIndicator from "@/components/TypingIndicator";
+import AnimatedAnswer from "@/components/AnimatedAnswer";
 
 interface Message {
   type: "user" | "assistant";
@@ -332,6 +335,8 @@ export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  // Index of the assistant message that should be revealed with the typing effect.
+  const [typingMessageIndex, setTypingMessageIndex] = useState<number | null>(null);
   const [chatRoomId, setChatRoomId] = useState<string | null>(null);
   const [isNewChat, setIsNewChat] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -749,7 +754,11 @@ export default function ChatInterface() {
         properties: response.properties
       };
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      setMessages((prev) => {
+        // Reveal only this brand-new answer with the typewriter effect.
+        setTypingMessageIndex(prev.length);
+        return [...prev, assistantMessage];
+      });
       
       // เพิ่มข้อความ AI ลงใน local state (useChats) ด้วย
       if (chatRoomId) {
@@ -912,7 +921,15 @@ export default function ChatInterface() {
                       ? translate("คุณ", "You", language) 
                       : "Property AI Guru"}
                   </div>
-                  <div className="mt-1 whitespace-pre-line">{message.content}</div>
+                  {message.type === "assistant" ? (
+                    <AnimatedAnswer
+                      text={message.content}
+                      animate={index === typingMessageIndex}
+                      onTick={scrollToBottom}
+                    />
+                  ) : (
+                    <div className="mt-1 whitespace-pre-line">{message.content}</div>
+                  )}
                   
                   {/* Render properties if available */}
                   {message.properties && message.properties.length > 0 && (
@@ -929,6 +946,9 @@ export default function ChatInterface() {
               </div>
             </div>
           ))}
+          <AnimatePresence>
+            {isLoading && <TypingIndicator language={language} />}
+          </AnimatePresence>
           <div ref={messagesEndRef} />
         </div>
         <form onSubmit={handleSubmit} className="p-4 border-t border-#43BE98/20 flex gap-2">

@@ -28,11 +28,14 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 from config import (  # noqa: E402  (env must be loaded first)
     ALLOWED_ORIGINS,
     CONSULTATION_STYLES,
+    MAX_CONTEXT_PROPERTIES,
     MAX_RESULTS,
     MAX_UPLOAD_SIZE,
     REQUIRED_COLUMNS,
 )
 from auth import AuthError, user_store, create_token, verify_token  # noqa: E402
+from financial import build_financial_profile, rank_and_trim  # noqa: E402
+from formatting import enforce_paragraph_style  # noqa: E402
 from language_models import GeminiUnavailableError, gemini  # noqa: E402
 from prompts import (  # noqa: E402
     GREETING_SYSTEM_PROMPT,
@@ -84,6 +87,7 @@ class ChatResponse(BaseModel):
     chat_room_id: Optional[str] = None
     properties: Optional[List[Dict[str, Any]]] = None
     messages: Optional[List[Dict[str, Any]]] = None
+    financial_insight: Optional[Dict[str, Any]] = None
 
 
 class UploadResponse(BaseModel):
@@ -164,21 +168,23 @@ def answer_property_question(
     query: str,
     style: str,
     history: List[Dict[str, str]],
-) -> tuple[str, List[Dict[str, Any]]]:
-    """Retrieve grounded context and let Gemini write the consultation reply."""
-    search_query = build_search_query(query, history)
-    properties = vector_store.search(search_query, top_k=MAX_RESULTS)
-    logger.info("Retrieved %d properties for query: %s", len(properties), search_query)
-    
-    # Filter properties based on budget signals
-    filtered_properties = filter_properties_by_budget(query, history, properties)
-    if filtered_properties != properties:
-        logger.info("Filtered properties from %d to %d based on budget", len(properties), len(filtered_properties))
-        properties = filtered_properties
+) -> tuple[str, List[Dict[str, Any]], Dict[str, Any]]:
+    """Financial routing -> hybrid retrieval -> grounded, paragraph-only answer."""
+    profile = build_financial_profile(query, history)
+    logger.info("Financial router: mode=%s signals=%s ceiling=%s",
+                profile.mode, profile.signals, profile.price_ceiling)
 
-    system_instruction = consultant_system_prompt(style)
+    search_query = build_search_query(query, history)
+    candidates = vector_store.search(search_query, top_k=MAX_RESULTS)
+    logger.info("Retrieved %d candidates for query: %s", len(candidates), search_query)
+
+    # Hybrid RAG guard: the model never sees more than MAX_CONTEXT_PROPERTIES rows.
+    properties = rank_and_trim(candidates, profile, limit=MAX_CONTEXT_PROPERTIES)
+    logger.info("Trimmed candidates from %d to %d", len(candidates), len(properties))
+
+    system_instruction = consultant_system_prompt(style, profile.mode)
     if properties:
-        prompt = consultant_user_prompt(query, properties)
+        prompt = consultant_user_prompt(query, properties, profile.summary_th())
     else:
         prompt = no_result_prompt(query, vector_store.catalogue_summary())
 
@@ -187,73 +193,19 @@ def answer_property_question(
         system_instruction=system_instruction,
         history=history,
     )
-    return answer, properties
-
-
-def filter_properties_by_budget(query: str, history: List[Dict[str, str]], properties: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Filter properties based on budget signals from user."""
-    if not properties:
-        return properties
-    
-    # Check for low budget signals
-    low_budget_keywords = ["จน", "งบน้อย", "ไม่มีเงิน", "งบจำกัด", "งบประหยัด", "ถูก", "ราคาต่ำ"]
-    
-    # Check current query and recent history
-    combined_text = query.lower()
-    for msg in history[-3:]:  # Check last 3 messages
-        if msg.get("role") == "user":
-            combined_text += " " + msg.get("content", "").lower()
-    
-    has_low_budget_signal = any(keyword in combined_text for keyword in low_budget_keywords)
-    
-    # Extract explicit budget from query
-    import re
-    budget_match = re.search(r'งบ\s*(\d+(?:\.\d+)?)\s*(?:ล้าน|ล้)?', combined_text)
-    explicit_budget = None
-    if budget_match:
-        budget_value = float(budget_match.group(1))
-        # Assume millions if no unit specified
-        explicit_budget = budget_value * 1_000_000
-    
-    # Filter properties
-    filtered = []
-    max_budget = None
-    
-    if has_low_budget_signal:
-        max_budget = 3_000_000  # 3 million baht for low budget
-    elif explicit_budget:
-        max_budget = explicit_budget * 1.1  # Allow 10% flexibility
-    
-    if max_budget:
-        for prop in properties:
-            price_str = str(prop.get("ราคา", "0"))
-            # Clean price string
-            price_str = price_str.replace(",", "").replace("บาท", "").replace(" ", "")
-            try:
-                price = float(price_str)
-                if price <= max_budget:
-                    filtered.append(prop)
-            except (ValueError, TypeError):
-                # If we can't parse price, include it
-                filtered.append(prop)
-        
-        # If filtering removed everything, return cheapest 2-3 properties
-        if not filtered and properties:
-            sorted_props = sorted(properties, key=lambda p: float(str(p.get("ราคา", "999999999")).replace(",", "").replace("บาท", "").replace(" ", "")) if str(p.get("ราคา", "")).replace(",", "").replace("บาท", "").replace(" ", "").replace(".", "").isdigit() else 999999999)
-            filtered = sorted_props[:min(3, len(sorted_props))]
-        
-        return filtered if filtered else properties
-    
-    return properties
+    return enforce_paragraph_style(answer), properties, profile.to_dict()
 
 
 def answer_greeting(query: str, history: List[Dict[str, str]]) -> str:
-    return gemini.generate(
-        prompt=query,
-        system_instruction=GREETING_SYSTEM_PROMPT,
-        history=history[-4:],
-        temperature=0.8,
-        max_output_tokens=160,
+    return enforce_paragraph_style(
+        gemini.generate(
+            prompt=query,
+            system_instruction=GREETING_SYSTEM_PROMPT,
+            history=history[-4:],
+            temperature=0.8,
+            max_output_tokens=160,
+        ),
+        max_paragraphs=2,
     )
 
 
@@ -326,9 +278,9 @@ async def chat(query: PropertyQuery):
     try:
         intent = classify_intent(query.query, history)
         if intent == "greeting":
-            answer, properties = answer_greeting(query.query, history), []
+            answer, properties, insight = answer_greeting(query.query, history), [], None
         else:
-            answer, properties = answer_property_question(query.query, style, history)
+            answer, properties, insight = answer_property_question(query.query, style, history)
     except GeminiUnavailableError as exc:
         logger.error("Gemini unavailable: %s", exc)
         raise HTTPException(status_code=503, detail=AI_ERROR_MESSAGE) from exc
@@ -343,6 +295,7 @@ async def chat(query: PropertyQuery):
         session_id=session_id,
         chat_room_id=session_id,
         properties=properties or None,
+        financial_insight=insight,
     )
 
 
